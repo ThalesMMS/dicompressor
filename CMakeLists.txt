@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(
-  transcode_htj2k
+  dicompressor
   VERSION 0.1.0
   DESCRIPTION "High-performance DICOM to HTJ2K transcoder"
   LANGUAGES C CXX)
@@ -106,10 +106,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
       $<$<CONFIG:Debug>:-O0>)
 endif()
 
-add_executable(transcode_htj2k app/main.cpp)
-target_link_libraries(transcode_htj2k PRIVATE transcode::core)
-htj2k_transcoder_set_warnings(transcode_htj2k)
-htj2k_transcoder_enable_sanitizers(transcode_htj2k)
+add_executable(dicompressor app/main.cpp)
+target_link_libraries(dicompressor PRIVATE transcode::core)
+htj2k_transcoder_set_warnings(dicompressor)
+htj2k_transcoder_enable_sanitizers(dicompressor)
 
 if(HTJ2K_TRANSCODER_BUILD_TESTS)
   enable_testing()

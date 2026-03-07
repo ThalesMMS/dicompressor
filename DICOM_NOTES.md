@@ -1,41 +1,41 @@
 # DICOM_NOTES
 
-## Saída
+## Output
 
-- Transfer Syntax de saída sempre `1.2.840.10008.1.2.4.201`
-- File Meta refeito com `EWM_createNewMeta`
+- Output Transfer Syntax always `1.2.840.10008.1.2.4.201`
+- File Meta remade with `EWM_createNewMeta`
 
 ## UIDs
 
-- `SOPInstanceUID` preservado por default
-- regenerado apenas com `--regenerate-sop-instance-uid`
+- `SOPInstanceUID` preserved by default
+- regenerated only with `--regenerate-sop-instance-uid`
 
 ## LossyImageCompression
 
-- Mantém `"01"` se o dataset já traz `"01"`
-- Mantém `"01"` se a sintaxe de origem é historicamente lossy
-- O HTJ2K final é lossless apenas em relação ao buffer decodificado
+- Maintains `"01"` if the dataset already has `"01"`
+- Maintains `"01"` if the source syntax is historically lossy
+- The final HTJ2K is lossless only in relation to the decoded buffer
 
-## Fotometria
+## Photometry
 
-- `MONOCHROME1/2`: preservadas
-- `RGB`: preservada
-- `YBR_FULL`: preservada
-- `YBR_FULL_422`: expandida e gravada como `YBR_FULL`
-- `PALETTE COLOR`: expandida para `RGB`
-- `YBR_RCT` e `YBR_ICT`: convertidas para `RGB`
+- `MONOCHROME1/2`: preserved
+- `RGB`: preserved
+- `YBR_FULL`: preserved
+- `YBR_FULL_422`: expanded and written as `YBR_FULL`
+- `PALETTE COLOR`: expanded to `RGB`
+- `YBR_RCT` and `YBR_ICT`: converted to `RGB`
 
 ## Pixel Data
 
-- Encapsulado em `DcmPixelSequence`
-- Um fragmento por frame na v1
-- Basic Offset Table vazio
-- `ExtendedOffsetTable` e `ExtendedOffsetTableLengths` em multi-frame
+- Encapsulated in `DcmPixelSequence`
+- One fragment per frame in v1
+- Empty Basic Offset Table
+- `ExtendedOffsetTable` and `ExtendedOffsetTableLengths` in multi-frame
 
-## Limitações
+## Limitations
 
-- `FloatPixelData` e `DoubleFloatPixelData`: fora do escopo da v1
+- `FloatPixelData` and `DoubleFloatPixelData`: out of scope for v1
 - `BitsAllocated = 1`: fallback `copied`
-- 32-bit unsigned full-range: não suportado na v1
-- Overlays em bits não usados não são preservados explicitamente
-- Sequências encapsuladas sem BOT/EOT e sem heurística clara entram em `copied`
+- 32-bit unsigned full-range: not supported in v1
+- Overlays in unused bits are not explicitly preserved
+- Encapsulated sequences without BOT/EOT and without clear heuristics enter as `copied`

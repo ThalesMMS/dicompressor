@@ -175,7 +175,7 @@ std::string usage_text()
 {
   std::ostringstream out;
   out << "Usage:\n"
-      << "  transcode_htj2k <input_root> [--output-root PATH | --in-place]\n"
+      << "  dicompressor <input_root> [--output-root PATH | --in-place]\n"
       << "                           [--zip-per-patient]\n"
       << "                           [--zip-mode stored|deflated]\n"
       << "                           [--report-json PATH]\n"

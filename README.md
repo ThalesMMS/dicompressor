@@ -1,21 +1,21 @@
-# transcode_htj2k
+# dicompressor
 
-Transcoder DICOM em C++20 para recodificação em lote para HTJ2K lossless (`1.2.840.10008.1.2.4.201`), com hot path 100% nativo, sem subprocess e sem arquivos temporários `.raw/.yuv/.j2c`.
+DICOM transcoder in C++20 for batch re-encoding to HTJ2K lossless (`1.2.840.10008.1.2.4.201`), with 100% native hot path, no subprocess and no temporary `.raw/.yuv/.j2c` files.
 
-## Visão geral
+## Overview
 
-- Encode HTJ2K sempre via OpenJPH em memória.
-- Stack DICOM principal via DCMTK para leitura P10, dataset, metadados, encapsulamento e escrita.
-- Decode de origem:
-  - nativo/JPEG/JPEG-LS/RLE via DCMTK
+- HTJ2K encode always via OpenJPH in memory.
+- Main DICOM stack via DCMTK for P10 reading, dataset, metadata, encapsulation and writing.
+- Source decode:
+  - native/JPEG/JPEG-LS/RLE via DCMTK
   - JPEG 2000 via OpenJPEG
   - HTJ2K via OpenJPH
-- Paralelismo principal por arquivo com fila dinâmica e thread pool fixo.
-- Escrita segura com arquivo temporário vizinho + `rename` atômico.
-- Modo `--output-root` e `--in-place`.
-- ZIP por paciente com backend `miniz`.
+- Main parallelism per file with dynamic queue and fixed thread pool.
+- Safe writing with neighbor temporary file + atomic `rename`.
+- `--output-root` and `--in-place` modes.
+- ZIP per patient with `miniz` backend.
 
-## Estrutura
+## Structure
 
 ```text
 app/
@@ -31,38 +31,38 @@ scripts/
 third_party/miniz/
 ```
 
-## Estado atual
+## Current state
 
-Implementado nesta versão:
+Implemented in this version:
 
-- CLI completa.
-- Descoberta recursiva de DICOMs.
-- Recodificação de single-frame e multi-frame.
+- Complete CLI.
+- Recursive DICOM discovery.
+- Single-frame and multi-frame re-encoding.
 - `MONOCHROME1`, `MONOCHROME2`, `RGB`, `YBR_FULL`, `YBR_FULL_422`, `PALETTE COLOR`, `YBR_RCT`, `YBR_ICT`.
-- Preservação conservadora de metadados e de histórico lossy.
-- `ExtendedOffsetTable` e `ExtendedOffsetTableLengths` para multi-frame de saída.
-- Relatório agregado e JSON.
-- ZIP por paciente.
+- Conservative preservation of metadata and lossy history.
+- `ExtendedOffsetTable` and `ExtendedOffsetTableLengths` for multi-frame output.
+- Aggregate and JSON report.
+- ZIP per patient.
 - Tests + benchmark executable.
 
-Limitações conhecidas estão em [DICOM_NOTES.md](./DICOM_NOTES.md).
+Known limitations are in [DICOM_NOTES.md](./DICOM_NOTES.md).
 
-## Dependências
+## Dependencies
 
-Obrigatórias:
+Required:
 
 - CMake 3.24+
 - Ninja
 - OpenJPH 0.26.x
 - OpenJPEG 2.5.x
 - DCMTK 3.7.x
-- compilador C++20
+- C++20 compiler
 
-Os scripts em [`scripts/`](./scripts) montam um prefixo isolado em `.deps/install/...`.
+The scripts in [`scripts/`](./scripts) build an isolated prefix in `.deps/install/...`.
 
 ## Build
 
-### 1. Bootstrap de dependências
+### 1. Bootstrap dependencies
 
 macOS Apple Silicon:
 
@@ -76,7 +76,7 @@ Linux x86_64:
 ./scripts/bootstrap_deps_linux_x86_64.sh
 ```
 
-### 2. Configurar
+### 2. Configure
 
 macOS Apple Silicon:
 
@@ -92,13 +92,13 @@ cmake --preset release \
   -DCMAKE_PREFIX_PATH="$PWD/.deps/install/linux-x86_64"
 ```
 
-### 3. Compilar
+### 3. Compile
 
 ```bash
 cmake --build --preset release -j
 ```
 
-### 4. Testar
+### 4. Test
 
 ```bash
 ctest --preset release
@@ -110,12 +110,12 @@ ctest --preset release
 - `debug-sanitized`
 - `macos-arm64-release`
 
-Release usa `-O3`, `NDEBUG` e IPO/LTO quando suportado.
+Release uses `-O3`, `NDEBUG` and IPO/LTO when supported.
 
-## Uso
+## Usage
 
 ```bash
-transcode_htj2k <input_root> [--output-root PATH | --in-place]
+dicompressor <input_root> [--output-root PATH | --in-place]
                            [--zip-per-patient]
                            [--zip-mode stored|deflated]
                            [--report-json PATH]
@@ -128,52 +128,52 @@ transcode_htj2k <input_root> [--output-root PATH | --in-place]
                            [--log-level trace|debug|info|warn|error]
 ```
 
-### Exemplos
+### Examples
 
-Saída espelhada em pasta separada:
+Mirrored output in separate folder:
 
 ```bash
-./build/release/transcode_htj2k ./Exames --output-root ./Exames-output
+./build/release/dicompressor ./Studies --output-root ./Studies-output
 ```
 
 In-place:
 
 ```bash
-./build/release/transcode_htj2k ./Exames --in-place --workers 8
+./build/release/dicompressor ./Studies --in-place --workers 8
 ```
 
-Com relatório JSON:
+With JSON report:
 
 ```bash
-./build/release/transcode_htj2k ./Exames \
-  --output-root ./Exames-output \
+./build/release/dicompressor ./Studies \
+  --output-root ./Studies-output \
   --report-json ./report.json
 ```
 
-Com ZIP por paciente:
+With ZIP per patient:
 
 ```bash
-./build/release/transcode_htj2k ./Exames \
-  --output-root ./Exames-output \
+./build/release/dicompressor ./Studies \
+  --output-root ./Studies-output \
   --zip-per-patient \
   --zip-mode stored
 ```
 
-## Comportamento funcional
+## Functional behavior
 
-- Sempre grava saída em HTJ2K lossless.
-- Reencoda arquivos já comprimidos quando a sintaxe de origem é decodificável.
-- Preserva `SOPInstanceUID` por padrão.
-- Com `--regenerate-sop-instance-uid`, gera novo UID e deixa o file meta coerente.
-- Se o dataset já indica perda anterior ou a Transfer Syntax de origem é lossy, mantém `LossyImageCompression = "01"`.
-- Arquivos não suportados:
-  - `--output-root`: são copiados e marcados como `copied`
-  - `--in-place`: original fica intacto e entra como `copied`
-- `--strict-color` promove casos de cor/fotometria não suportados para falha.
+- Always writes output in HTJ2K lossless.
+- Re-encodes already compressed files when the source syntax is decodable.
+- Preserves `SOPInstanceUID` by default.
+- With `--regenerate-sop-instance-uid`, generates new UID and keeps file meta coherent.
+- If the dataset already indicates prior loss or the source Transfer Syntax is lossy, maintains `LossyImageCompression = "01"`.
+- Unsupported files:
+  - `--output-root`: are copied and marked as `copied`
+  - `--in-place`: original remains intact and enters as `copied`
+- `--strict-color` promotes unsupported color/photometry cases to failure.
 
-## Relatório
+## Report
 
-O relatório final agrega:
+The final report aggregates:
 
 - `total`
 - `ok`
@@ -184,36 +184,36 @@ O relatório final agrega:
 - `pixels`
 - `bytes_read`
 - `bytes_written`
-- tempos por fase
-- throughput em `files/s`, `frames/s` e `MPix/s`
+- times per phase
+- throughput in `files/s`, `frames/s` and `MPix/s`
 
-Com `--report-json`, o arquivo também inclui entradas por job.
+With `--report-json`, the file also includes entries per job.
 
 ## Benchmark
 
-O binário [`transcode_bench`](./bench/main.cpp) reutiliza o mesmo core e emite o resumo agregado da execução:
+The [`transcode_bench`](./bench/main.cpp) binary reuses the same core and emits the aggregate execution summary:
 
 ```bash
-./build/release/transcode_bench ./Exames --output-root ./Exames-bench-out --workers 1
-./build/release/transcode_bench ./Exames --output-root ./Exames-bench-out --workers 8
+./build/release/transcode_bench ./Studies --output-root ./Studies-bench-out --workers 1
+./build/release/transcode_bench ./Studies --output-root ./Studies-bench-out --workers 8
 ```
 
-## Testes
+## Tests
 
-A suíte cobre:
+The suite covers:
 
-- parsing de CLI
-- descoberta de DICOM
-- round-trip mínimo do encoder/decoder HTJ2K
-- geração de report JSON
+- CLI parsing
+- DICOM discovery
+- minimal HTJ2K encoder/decoder round-trip
+- JSON report generation
 - `output-root`
 - `in-place`
-- fallback `copied`
-- ZIP por paciente
+- `copied` fallback
+- ZIP per patient
 
-## Notas
+## Notes
 
-- O protótipo Python original permanece no repositório apenas como referência arquitetural do fluxo substituído.
-- Esta v1 prioriza throughput e segurança operacional sobre cobertura universal de todos os formatos DICOM exóticos.
-- Detalhes de performance: [PERFORMANCE_NOTES.md](./PERFORMANCE_NOTES.md)
-- Detalhes DICOM: [DICOM_NOTES.md](./DICOM_NOTES.md)
+- The original Python prototype remains in the repository only as architectural reference for the replaced flow.
+- This v1 prioritizes throughput and operational safety over universal coverage of all exotic DICOM formats.
+- Performance details: [PERFORMANCE_NOTES.md](./PERFORMANCE_NOTES.md)
+- DICOM details: [DICOM_NOTES.md](./DICOM_NOTES.md)

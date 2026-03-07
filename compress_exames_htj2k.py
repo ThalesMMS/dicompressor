@@ -91,85 +91,85 @@ class ProcessResult:
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Recodifica recursivamente arquivos DICOM para HTJ2K lossless "
-            "(Transfer Syntax UID 1.2.840.10008.1.2.4.201) usando OpenJPH."
+            "Recursively re-encodes DICOM files to HTJ2K lossless "
+            "(Transfer Syntax UID 1.2.840.10008.1.2.4.201) using OpenJPH."
         )
     )
-    parser.add_argument("input_root", help="Pasta raiz de entrada, por exemplo ./Exames")
+    parser.add_argument("input_root", help="Input root folder, for example ./Studies")
 
     mode = parser.add_mutually_exclusive_group(required=False)
     mode.add_argument(
         "--output-root",
         help=(
-            "Pasta raiz de saída. Se omitido e --in-place não for usado, o padrão é "
+            "Output root folder. If omitted and --in-place is not used, defaults to "
             "<input_root>-output"
         ),
     )
     mode.add_argument(
         "--in-place",
         action="store_true",
-        help="Substitui cada arquivo original pelo HTJ2K gerado.",
+        help="Replaces each original file with the generated HTJ2K.",
     )
 
     parser.add_argument(
         "--zip-per-patient",
         action="store_true",
-        help="Após o processamento, gera um ZIP por pasta de paciente no primeiro nível.",
+        help="After processing, generates one ZIP per patient folder at the first level.",
     )
     parser.add_argument(
         "--zip-mode",
         choices=("stored", "deflated"),
         default="stored",
         help=(
-            "Modo do ZIP. Como os DICOMs já estarão comprimidos em HTJ2K, "
-            "'stored' costuma ser mais rápido e quase sempre suficiente."
+            "ZIP mode. Since DICOMs will already be compressed in HTJ2K, "
+            "'stored' is usually faster and almost always sufficient."
         ),
     )
     parser.add_argument(
         "--report-json",
         default=None,
-        help="Caminho opcional para gravar relatório JSON com sucessos/falhas.",
+        help="Optional path to write JSON report with successes/failures.",
     )
     parser.add_argument(
         "--ojph-compress",
         default=None,
-        help="Caminho do executável ojph_compress. Se omitido, procura no PATH e em locais comuns.",
+        help="Path to ojph_compress executable. If omitted, searches in PATH and common locations.",
     )
     parser.add_argument(
         "--gdcmconv",
         default=None,
-        help="Caminho do executável gdcmconv. Se omitido, procura no PATH e em locais comuns.",
+        help="Path to gdcmconv executable. If omitted, searches in PATH and common locations.",
     )
     parser.add_argument(
         "--num-decomps",
         type=int,
         default=5,
-        help="Número máximo de decomposições wavelet do OpenJPH (padrão: 5).",
+        help="Maximum number of OpenJPH wavelet decompositions (default: 5).",
     )
     parser.add_argument(
         "--block-size",
         default="64,64",
-        help="Tamanho do codeblock do OpenJPH, no formato x,y (padrão: 64,64).",
+        help="OpenJPH codeblock size, in x,y format (default: 64,64).",
     )
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Sobrescreve arquivos de saída existentes no modo --output-root.",
+        help="Overwrites existing output files in --output-root mode.",
     )
     parser.add_argument(
         "--regenerate-sop-instance-uid",
         action="store_true",
         help=(
-            "Gera um novo SOP Instance UID para a saída. Útil se você quiser uma política "
-            "mais conservadora de proveniência."
+            "Generates a new SOP Instance UID for the output. Useful if you want a "
+            "more conservative provenance policy."
         ),
     )
     parser.add_argument(
         "--strict-color",
         action="store_true",
         help=(
-            "Falha em vez de pular silenciosamente fotometrias não suportadas. "
-            "Sem esta opção, tais arquivos entram como falha no relatório e o restante continua."
+            "Fails instead of silently skipping unsupported photometries. "
+            "Without this option, such files are marked as failed in the report and the rest continues."
         ),
     )
     parser.add_argument(
@@ -177,8 +177,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=int,
         default=None,
         help=(
-            "Número de processos paralelos. Padrão: número de CPUs do sistema "
-            f"(detectado: {os.cpu_count() or 1}). Use 1 para desabilitar paralelismo."
+            "Number of parallel processes. Default: number of system CPUs "
+            f"(detected: {os.cpu_count() or 1}). Use 1 to disable parallelism."
         ),
     )
 
@@ -210,12 +210,12 @@ def find_executable(preferred: str | None, names: Sequence[str]) -> str:
         if candidate and Path(candidate).exists() and os.access(candidate, os.X_OK):
             return candidate
 
-    raise FileNotFoundError(f"Executável não encontrado. Tentativas: {', '.join(candidates) if candidates else '(nenhuma)'}")
+    raise FileNotFoundError(f"Executable not found. Attempts: {', '.join(candidates) if candidates else '(none)'}")
 
 
 def validate_roots(input_root: Path, output_root: Path | None, in_place: bool) -> None:
     if not input_root.exists() or not input_root.is_dir():
-        raise ProcessingError(f"Pasta de entrada não existe ou não é diretório: {input_root}")
+        raise ProcessingError(f"Input folder does not exist or is not a directory: {input_root}")
 
     if in_place:
         return
@@ -228,7 +228,7 @@ def validate_roots(input_root: Path, output_root: Path | None, in_place: bool) -
     except ValueError:
         return
     raise ProcessingError(
-        "A pasta de saída não pode ficar dentro da pasta de entrada, para evitar recursão sobre os próprios arquivos gerados."
+        "The output folder cannot be inside the input folder, to avoid recursion over the generated files themselves."
     )
 
 
@@ -240,7 +240,7 @@ def discover_dicom_files(input_root: Path) -> List[Path]:
             continue
         scanned += 1
         if scanned % 50000 == 0:
-            print(f"  Descobrindo arquivos... {scanned} verificados, {len(files)} DICOM até agora", flush=True)
+            print(f"  Discovering files... {scanned} checked, {len(files)} DICOM so far", flush=True)
         if path.suffix.lower() == ".dcm":
             files.append(path)
             continue
@@ -295,18 +295,18 @@ def normalize_block_size(value: str) -> str:
     raw = value.strip().replace("{", "").replace("}", "")
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     if len(parts) != 2:
-        raise ProcessingError("--block-size deve estar no formato x,y; exemplo: 64,64")
+        raise ProcessingError("--block-size must be in x,y format; example: 64,64")
     x, y = parts
     if not x.isdigit() or not y.isdigit():
-        raise ProcessingError("--block-size deve conter apenas inteiros positivos")
+        raise ProcessingError("--block-size must contain only positive integers")
     return f"{{{x},{y}}}"
 
 
 def build_image_spec(ds) -> ImageSpec:
     if "PixelData" not in ds:
-        raise UnsupportedFormatError("Dataset sem PixelData")
+        raise UnsupportedFormatError("Dataset without PixelData")
     if "FloatPixelData" in ds or "DoubleFloatPixelData" in ds:
-        raise UnsupportedFormatError("Float Pixel Data / Double Float Pixel Data não são suportados por este script")
+        raise UnsupportedFormatError("Float Pixel Data / Double Float Pixel Data are not supported by this script")
 
     required = [
         "Rows",
@@ -320,7 +320,7 @@ def build_image_spec(ds) -> ImageSpec:
     ]
     missing = [name for name in required if name not in ds]
     if missing:
-        raise ProcessingError(f"Dataset sem atributos obrigatórios de pixel: {', '.join(missing)}")
+        raise ProcessingError(f"Dataset without required pixel attributes: {', '.join(missing)}")
 
     rows = int(ds.Rows)
     cols = int(ds.Columns)
@@ -333,23 +333,23 @@ def build_image_spec(ds) -> ImageSpec:
     photometric = str(ds.PhotometricInterpretation).strip().upper()
 
     if rows <= 0 or cols <= 0:
-        raise ProcessingError("Rows/Columns inválidos")
+        raise ProcessingError("Invalid Rows/Columns")
     if samples not in (1, 3):
-        raise UnsupportedFormatError(f"SamplesPerPixel={samples} não suportado; suportado: 1 ou 3")
+        raise UnsupportedFormatError(f"SamplesPerPixel={samples} not supported; supported: 1 or 3")
     if bits_allocated not in (8, 16, 32):
         raise UnsupportedFormatError(
-            f"BitsAllocated={bits_allocated} não suportado por este script; suportado: 8, 16 ou 32"
+            f"BitsAllocated={bits_allocated} not supported by this script; supported: 8, 16 or 32"
         )
     if photometric not in SUPPORTED_PHOTOMETRIC:
         raise UnsupportedFormatError(
-            "PhotometricInterpretation não suportado de forma conservadora por este script: "
-            f"{photometric}. Suportados: {', '.join(sorted(SUPPORTED_PHOTOMETRIC))}"
+            "PhotometricInterpretation not conservatively supported by this script: "
+            f"{photometric}. Supported: {', '.join(sorted(SUPPORTED_PHOTOMETRIC))}"
         )
 
     target_photometric = photometric
     if photometric == "YBR_FULL_422":
-        # iter_pixels(raw=True) expande o subsampling 4:2:2 para resolução total,
-        # portanto a saída deve ser gravada como YBR_FULL.
+        # iter_pixels(raw=True) expands 4:2:2 subsampling to full resolution,
+        # therefore the output should be written as YBR_FULL.
         target_photometric = "YBR_FULL"
 
     return ImageSpec(
@@ -396,7 +396,7 @@ def run_command(cmd: Sequence[str], cwd: Path | None = None) -> subprocess.Compl
     if proc.returncode != 0:
         joined = " ".join(cmd)
         raise ProcessingError(
-            f"Comando falhou ({proc.returncode}): {joined}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+            f"Command failed ({proc.returncode}): {joined}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
         )
     return proc
 
@@ -412,7 +412,7 @@ def decode_frames(input_path: Path, ds, gdcmconv_path: str) -> Iterator[np.ndarr
         return
     except Exception as first_exc:
         if not is_compressed_transfer_syntax(ds):
-            raise ProcessingError(f"Falha ao decodificar Pixel Data: {first_exc}") from first_exc
+            raise ProcessingError(f"Failed to decode Pixel Data: {first_exc}") from first_exc
 
         with tempfile.TemporaryDirectory(prefix="gdcm-raw-") as tmp_dir:
             tmp_path = Path(tmp_dir) / "uncompressed.dcm"
@@ -424,8 +424,8 @@ def decode_frames(input_path: Path, ds, gdcmconv_path: str) -> Iterator[np.ndarr
                 return
             except Exception as second_exc:
                 raise ProcessingError(
-                    "Falha ao decodificar o arquivo tanto diretamente quanto via gdcmconv --raw. "
-                    f"Erro direto: {first_exc!r}; erro fallback: {second_exc!r}"
+                    "Failed to decode the file both directly and via gdcmconv --raw. "
+                    f"Direct error: {first_exc!r}; fallback error: {second_exc!r}"
                 ) from second_exc
 
             yield first_fb
@@ -440,7 +440,7 @@ def decode_frames(input_path: Path, ds, gdcmconv_path: str) -> Iterator[np.ndarr
 
 def frame_to_openjph_input(frame: np.ndarray, spec: ImageSpec, workdir: Path, frame_index: int) -> tuple[Path, list[str]]:
     if frame.dtype.kind not in ("u", "i"):
-        raise ProcessingError(f"dtype não suportado para compressão lossless: {frame.dtype}")
+        raise ProcessingError(f"dtype not supported for lossless compression: {frame.dtype}")
 
     frame = ensure_little_endian_contiguous(frame)
     signed = spec.pixel_representation == 1
@@ -449,7 +449,7 @@ def frame_to_openjph_input(frame: np.ndarray, spec: ImageSpec, workdir: Path, fr
 
     if spec.samples_per_pixel == 1:
         if frame.ndim != 2:
-            raise ProcessingError(f"Frame mono esperado em 2D, recebido shape={frame.shape}")
+            raise ProcessingError(f"Expected 2D mono frame, received shape={frame.shape}")
         raw_path = workdir / f"frame-{frame_index:06d}.raw"
         raw_path.write_bytes(frame.tobytes(order="C"))
         extra = [
@@ -462,7 +462,7 @@ def frame_to_openjph_input(frame: np.ndarray, spec: ImageSpec, workdir: Path, fr
         return raw_path, extra
 
     if frame.ndim != 3 or frame.shape[2] != 3:
-        raise ProcessingError(f"Frame RGB/YBR esperado em 3D com 3 canais, recebido shape={frame.shape}")
+        raise ProcessingError(f"Expected 3D RGB/YBR frame with 3 channels, received shape={frame.shape}")
 
     planar = np.transpose(frame, (2, 0, 1)).copy(order="C")
     yuv_path = workdir / f"frame-{frame_index:06d}.yuv"
@@ -574,7 +574,7 @@ def process_file(
 ) -> str:
     """Returns 'ok' if HTJ2K-encoded, 'copied' if copied as-is due to unsupported format."""
     if dst.exists() and not overwrite and src.resolve() != dst.resolve():
-        raise ProcessingError(f"Arquivo de saída já existe: {dst}")
+        raise ProcessingError(f"Output file already exists: {dst}")
 
     ds = dcmread(str(src), force=True, defer_size=1024)
     try:
@@ -603,7 +603,7 @@ def process_file(
 
     if decoded_count != spec.number_of_frames:
         raise ProcessingError(
-            f"Número de frames decodificados ({decoded_count}) diferente de NumberOfFrames ({spec.number_of_frames})"
+            f"Number of decoded frames ({decoded_count}) differs from NumberOfFrames ({spec.number_of_frames})"
         )
 
     ensure_file_meta(ds)
@@ -724,25 +724,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         validate_roots(input_root, output_root, args.in_place)
     except Exception as exc:
-        print(f"ERRO: {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
     try:
         ojph_compress_path = find_executable(args.ojph_compress, ["ojph_compress"])
     except Exception as exc:
-        print(f"ERRO: não consegui localizar ojph_compress: {exc}", file=sys.stderr)
+        print(f"ERROR: could not locate ojph_compress: {exc}", file=sys.stderr)
         return 2
 
     try:
         gdcmconv_path = find_executable(args.gdcmconv, ["gdcmconv"])
     except Exception as exc:
-        print(f"ERRO: não consegui localizar gdcmconv: {exc}", file=sys.stderr)
+        print(f"ERROR: could not locate gdcmconv: {exc}", file=sys.stderr)
         return 2
 
     try:
         block_size = normalize_block_size(args.block_size)
     except Exception as exc:
-        print(f"ERRO: {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
     if output_root is not None:
@@ -750,7 +750,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     files = discover_dicom_files(input_root)
     if not files:
-        print("Nenhum arquivo DICOM encontrado.", file=sys.stderr)
+        print("No DICOM files found.", file=sys.stderr)
         return 1
 
     results: list[ProcessResult] = []
@@ -759,12 +759,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     num_workers = args.workers if args.workers is not None else (os.cpu_count() or 1)
     num_workers = max(1, num_workers)
 
-    print(f"Entrada: {input_root}")
+    print(f"Input: {input_root}")
     if args.in_place:
-        print("Modo: in-place")
+        print("Mode: in-place")
     else:
-        print(f"Saída: {output_root}")
-    print(f"Arquivos DICOM encontrados: {len(files)}")
+        print(f"Output: {output_root}")
+    print(f"DICOM files found: {len(files)}")
     print(f"Workers: {num_workers}")
     print(f"OpenJPH: {ojph_compress_path}")
     print(f"GDCM: {gdcmconv_path}")
@@ -804,14 +804,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             if result.status in ("ok", "copied") and result.patient:
                 patients_processed.add(result.patient)
             elif result.status == "failed":
-                print(f"[{index}/{len(files)}] FALHA  {src}\n    {result.message}", file=sys.stderr)
+                print(f"[{index}/{len(files)}] FAILED  {src}\n    {result.message}", file=sys.stderr)
                 if args.strict_color:
                     if "PhotometricInterpretation" in result.message or "SamplesPerPixel" in result.message:
                         break
             if index % 1000 == 0 or index == len(files):
                 elapsed = time.time() - start_time
                 rate = index / elapsed if elapsed > 0 else 0
-                print(f"  [{index}/{len(files)}] {rate:.1f} arquivos/s", flush=True)
+                print(f"  [{index}/{len(files)}] {rate:.1f} files/s", flush=True)
     else:
         # Parallel path using ProcessPoolExecutor
         completed = 0
@@ -844,14 +844,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     src, dst, patient = future_to_info[fut]
                     result = ProcessResult(
                         src=str(src), dst=str(dst), status="failed",
-                        message=f"Erro inesperado no worker: {exc}", patient=patient,
+                        message=f"Unexpected worker error: {exc}", patient=patient,
                     )
                 results.append(result)
                 if result.status in ("ok", "copied") and result.patient:
                     patients_processed.add(result.patient)
                 elif result.status == "failed":
                     print(
-                        f"[{completed}/{len(files)}] FALHA  {result.src}\n    {result.message}",
+                        f"[{completed}/{len(files)}] FAILED  {result.src}\n    {result.message}",
                         file=sys.stderr,
                     )
                     if args.strict_color and not aborted:
@@ -864,7 +864,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if completed % 1000 == 0 or completed == len(files):
                     elapsed = time.time() - start_time
                     rate = completed / elapsed if elapsed > 0 else 0
-                    print(f"  [{completed}/{len(files)}] {rate:.1f} arquivos/s", flush=True)
+                    print(f"  [{completed}/{len(files)}] {rate:.1f} files/s", flush=True)
 
     if args.zip_per_patient:
         zip_root = input_root if args.in_place else output_root
@@ -878,18 +878,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 zip_patient_folder(patient_dir, zip_path, args.zip_mode)
                 if not args.in_place:
                     shutil.rmtree(patient_dir)
-                print(f"ZIP criado: {zip_path}")
+                print(f"ZIP created: {zip_path}")
             except Exception as exc:
                 results.append(
                     ProcessResult(
                         src=str(patient_dir),
                         dst=str(zip_path),
                         status="failed",
-                        message=f"Falha ao zipar pasta do paciente: {exc}",
+                        message=f"Failed to zip patient folder: {exc}",
                         patient=patient,
                     )
                 )
-                print(f"FALHA ao criar ZIP de {patient_dir}: {exc}", file=sys.stderr)
+                print(f"FAILED to create ZIP of {patient_dir}: {exc}", file=sys.stderr)
 
     # End timing
     end_time = time.time()
@@ -901,15 +901,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     seconds = execution_time % 60
 
     if hours > 0:
-        print(f"Tempo de execução: {hours}h {minutes}m {seconds:.2f}s")
+        print(f"Execution time: {hours}h {minutes}m {seconds:.2f}s")
     elif minutes > 0:
-        print(f"Tempo de execução: {minutes}m {seconds:.2f}s")
+        print(f"Execution time: {minutes}m {seconds:.2f}s")
     else:
-        print(f"Tempo de execução: {seconds:.2f}s")
+        print(f"Execution time: {seconds:.2f}s")
 
     if execution_time > 0:
         files_per_sec = len(results) / execution_time
-        print(f"Throughput: {files_per_sec:.1f} arquivos/s")
+        print(f"Throughput: {files_per_sec:.1f} files/s")
 
     if args.report_json:
         write_report(Path(args.report_json).resolve(), results)
@@ -917,7 +917,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ok_count = sum(1 for r in results if r.status == "ok")
     copied_count = sum(1 for r in results if r.status == "copied")
     fail_count = sum(1 for r in results if r.status == "failed")
-    print(f"Resumo: ok={ok_count} copiados={copied_count} falha={fail_count} total={len(results)}")
+    print(f"Summary: ok={ok_count} copied={copied_count} failed={fail_count} total={len(results)}")
     return 0 if fail_count == 0 else 3
 
 

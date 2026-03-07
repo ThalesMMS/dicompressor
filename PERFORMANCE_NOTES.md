@@ -1,43 +1,43 @@
 # PERFORMANCE_NOTES
 
-## Gargalos eliminados
+## Eliminated bottlenecks
 
-- Sem `subprocess` no hot path.
-- Sem `.raw`, `.yuv` ou `.j2c` temporários.
-- Encode HTJ2K direto em memória com `ojph::mem_outfile`.
-- Paralelismo por arquivo com thread pool fixo.
-- Reuso do `ojph::codestream` com `restart()`.
+- No `subprocess` in hot path.
+- No temporary `.raw`, `.yuv` or `.j2c`.
+- HTJ2K encode directly in memory with `ojph::mem_outfile`.
+- Parallelism per file with fixed thread pool.
+- Reuse of `ojph::codestream` with `restart()`.
 
-## Paralelismo
+## Parallelism
 
-- Scheduler dinâmico em `core/job_scheduler.cpp`.
-- `--workers` controla o número de workers.
-- Sem `std::async` massivo e sem spawn por frame.
+- Dynamic scheduler in `core/job_scheduler.cpp`.
+- `--workers` controls the number of workers.
+- No massive `std::async` and no spawn per frame.
 
-## Memória
+## Memory
 
-- Decodificação frame a frame.
-- Não materializa todos os frames decodificados de um estudo ao mesmo tempo.
-- Buffers de scratch reaproveitados.
+- Frame-by-frame decoding.
+- Does not materialize all decoded frames of a study at the same time.
+- Reused scratch buffers.
 
 ## I/O
 
-- Descoberta com fast-path para `.dcm`.
-- Escrita segura com temp file vizinho + `fsync` + `rename`.
-- Em `--in-place`, o original só sai depois da escrita bem-sucedida.
+- Discovery with fast-path for `.dcm`.
+- Safe writing with neighbor temp file + `fsync` + `rename`.
+- In `--in-place`, the original only leaves after successful writing.
 
-## Métricas emitidas
+## Emitted metrics
 
 - `files/s`
 - `frames/s`
 - `MPix/s`
 - `bytes_read`
 - `bytes_written`
-- breakdown por fase no report JSON
+- breakdown per phase in JSON report
 
-## Próximos passos
+## Next steps
 
-- `WorkerContext` persistente por thread.
-- Encapsulamento streaming para multi-frame muito grande.
-- Métricas de RSS e histogramas p50/p95.
-- Fast-paths vetorizados para mono 16-bit e RGB 8-bit.
+- Persistent `WorkerContext` per thread.
+- Streaming encapsulation for very large multi-frame.
+- RSS metrics and p50/p95 histograms.
+- Vectorized fast-paths for mono 16-bit and RGB 8-bit.
