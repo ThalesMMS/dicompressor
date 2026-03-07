@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Dependências C++ / CLI
-brew install openjph gdcm dcmtk
-
-# Ambiente Python
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/bootstrap_deps_macos_arm64.sh"
 
 echo
-echo "Instalação concluída."
-echo "Ative o ambiente: source .venv/bin/activate"
-echo "Teste as CLIs: which ojph_compress && which gdcmconv && dcmdump --version"
+echo "Dependências C++ instaladas em .deps/install/macos-arm64."
+echo "Configure com:"
+echo "  cmake --preset macos-arm64-release -DCMAKE_PREFIX_PATH=$PWD/.deps/install/macos-arm64"

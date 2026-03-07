@@ -4,3 +4,6 @@ Exames-output/
 __pycache__/
 *.pyc
 .DS_Store
+build/
+.deps/
+compile_commands.json

@@ -1,195 +1,219 @@
-# Recodificação DICOM para HTJ2K lossless (OpenJPH + GDCM + Python)
+# transcode_htj2k
 
-Este projeto percorre uma árvore como:
+Transcoder DICOM em C++20 para recodificação em lote para HTJ2K lossless (`1.2.840.10008.1.2.4.201`), com hot path 100% nativo, sem subprocess e sem arquivos temporários `.raw/.yuv/.j2c`.
+
+## Visão geral
+
+- Encode HTJ2K sempre via OpenJPH em memória.
+- Stack DICOM principal via DCMTK para leitura P10, dataset, metadados, encapsulamento e escrita.
+- Decode de origem:
+  - nativo/JPEG/JPEG-LS/RLE via DCMTK
+  - JPEG 2000 via OpenJPEG
+  - HTJ2K via OpenJPH
+- Paralelismo principal por arquivo com fila dinâmica e thread pool fixo.
+- Escrita segura com arquivo temporário vizinho + `rename` atômico.
+- Modo `--output-root` e `--in-place`.
+- ZIP por paciente com backend `miniz`.
+
+## Estrutura
 
 ```text
-./Exames/
-./Exames/Fulano/data-exame-1/*.dcm
-./Exames/Fulano/data-exame-2/*.dcm
-./Exames/Ciclano/data-exame-1/*.dcm
-./Exames/Beltrano/
+app/
+core/
+codec/
+dicom/
+util/
+platform/
+tests/
+bench/
+cmake/
+scripts/
+third_party/miniz/
 ```
 
-e recodifica todos os DICOMs para **HTJ2K lossless**.
+## Estado atual
 
-## Arquitetura
+Implementado nesta versão:
 
-- **OpenJPH (`ojph_compress`)**: encoder HTJ2K principal.
-- **GDCM (`gdcmconv`)**: fallback de descompressão para sintaxes encapsuladas que não forem decodificadas diretamente pela stack Python.
-- **pydicom + pylibjpeg-openjpeg**: leitura/escrita DICOM, encapsulamento por frame, e decodificação direta quando disponível.
+- CLI completa.
+- Descoberta recursiva de DICOMs.
+- Recodificação de single-frame e multi-frame.
+- `MONOCHROME1`, `MONOCHROME2`, `RGB`, `YBR_FULL`, `YBR_FULL_422`, `PALETTE COLOR`, `YBR_RCT`, `YBR_ICT`.
+- Preservação conservadora de metadados e de histórico lossy.
+- `ExtendedOffsetTable` e `ExtendedOffsetTableLengths` para multi-frame de saída.
+- Relatório agregado e JSON.
+- ZIP por paciente.
+- Tests + benchmark executable.
 
-A ideia é usar **bibliotecas maduras em C++** para a parte crítica do codec, mantendo a orquestração em Python.
+Limitações conhecidas estão em [DICOM_NOTES.md](./DICOM_NOTES.md).
 
-## O que o script faz
+## Dependências
 
-- Varre recursivamente a pasta de entrada.
-- Recodifica arquivos já comprimidos e também arquivos nativos (uncompressed).
-- Gera saída em uma pasta `Exames-output` preservando a estrutura, **ou** faz substituição **in-place**.
-- Opcionalmente cria um ZIP por paciente (`Fulano.zip`, `Ciclano.zip`, ...).
-- Mantém diretórios vazios quando usado `--output-root` (por exemplo `Beltrano/` mesmo sem exames).
-- Codifica em **HTJ2K Lossless** (`1.2.840.10008.1.2.4.201`).
-- Para multi-frame, codifica **1 frame por codestream** e encapsula o conjunto no DICOM de saída.
+Obrigatórias:
 
-## Requisitos
+- CMake 3.24+
+- Ninja
+- OpenJPH 0.26.x
+- OpenJPEG 2.5.x
+- DCMTK 3.7.x
+- compilador C++20
 
-### macOS / Apple Silicon
+Os scripts em [`scripts/`](./scripts) montam um prefixo isolado em `.deps/install/...`.
+
+## Build
+
+### 1. Bootstrap de dependências
+
+macOS Apple Silicon:
 
 ```bash
-brew install openjph gdcm dcmtk
+./scripts/bootstrap_deps_macos_arm64.sh
 ```
 
-### Python
+Linux x86_64:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+./scripts/bootstrap_deps_linux_x86_64.sh
 ```
 
-Ou rode diretamente:
+### 2. Configurar
+
+macOS Apple Silicon:
 
 ```bash
-./install_macos_apple_silicon.sh
+cmake --preset macos-arm64-release \
+  -DCMAKE_PREFIX_PATH="$PWD/.deps/install/macos-arm64"
 ```
+
+Linux:
+
+```bash
+cmake --preset release \
+  -DCMAKE_PREFIX_PATH="$PWD/.deps/install/linux-x86_64"
+```
+
+### 3. Compilar
+
+```bash
+cmake --build --preset release -j
+```
+
+### 4. Testar
+
+```bash
+ctest --preset release
+```
+
+## Presets
+
+- `release`
+- `debug-sanitized`
+- `macos-arm64-release`
+
+Release usa `-O3`, `NDEBUG` e IPO/LTO quando suportado.
 
 ## Uso
 
-### 1) Saída em `Exames-output` mantendo a estrutura
+```bash
+transcode_htj2k <input_root> [--output-root PATH | --in-place]
+                           [--zip-per-patient]
+                           [--zip-mode stored|deflated]
+                           [--report-json PATH]
+                           [--num-decomps N]
+                           [--block-size X,Y]
+                           [--overwrite]
+                           [--regenerate-sop-instance-uid]
+                           [--strict-color]
+                           [--workers N]
+                           [--log-level trace|debug|info|warn|error]
+```
+
+### Exemplos
+
+Saída espelhada em pasta separada:
 
 ```bash
-python compress_exames_htj2k.py ./Exames
+./build/release/transcode_htj2k ./Exames --output-root ./Exames-output
 ```
 
-Equivale a:
+In-place:
 
 ```bash
-python compress_exames_htj2k.py ./Exames --output-root ./Exames-output
+./build/release/transcode_htj2k ./Exames --in-place --workers 8
 ```
 
-### 2) Saída em pasta arbitrária
+Com relatório JSON:
 
 ```bash
-python compress_exames_htj2k.py ./Exames --output-root /dados/Exames-output
+./build/release/transcode_htj2k ./Exames \
+  --output-root ./Exames-output \
+  --report-json ./report.json
 ```
 
-### 3) Compressão in-place
+Com ZIP por paciente:
 
 ```bash
-python compress_exames_htj2k.py ./Exames --in-place
+./build/release/transcode_htj2k ./Exames \
+  --output-root ./Exames-output \
+  --zip-per-patient \
+  --zip-mode stored
 ```
 
-### 4) ZIP por paciente
+## Comportamento funcional
+
+- Sempre grava saída em HTJ2K lossless.
+- Reencoda arquivos já comprimidos quando a sintaxe de origem é decodificável.
+- Preserva `SOPInstanceUID` por padrão.
+- Com `--regenerate-sop-instance-uid`, gera novo UID e deixa o file meta coerente.
+- Se o dataset já indica perda anterior ou a Transfer Syntax de origem é lossy, mantém `LossyImageCompression = "01"`.
+- Arquivos não suportados:
+  - `--output-root`: são copiados e marcados como `copied`
+  - `--in-place`: original fica intacto e entra como `copied`
+- `--strict-color` promove casos de cor/fotometria não suportados para falha.
+
+## Relatório
+
+O relatório final agrega:
+
+- `total`
+- `ok`
+- `copied`
+- `failed`
+- `zipped`
+- `frames`
+- `pixels`
+- `bytes_read`
+- `bytes_written`
+- tempos por fase
+- throughput em `files/s`, `frames/s` e `MPix/s`
+
+Com `--report-json`, o arquivo também inclui entradas por job.
+
+## Benchmark
+
+O binário [`transcode_bench`](./bench/main.cpp) reutiliza o mesmo core e emite o resumo agregado da execução:
 
 ```bash
-python compress_exames_htj2k.py ./Exames --output-root ./Exames-output --zip-per-patient
+./build/release/transcode_bench ./Exames --output-root ./Exames-bench-out --workers 1
+./build/release/transcode_bench ./Exames --output-root ./Exames-bench-out --workers 8
 ```
 
-### 5) In-place + ZIP por paciente
+## Testes
 
-```bash
-python compress_exames_htj2k.py ./Exames --in-place --zip-per-patient
-```
+A suíte cobre:
 
-### 6) Relatório JSON
+- parsing de CLI
+- descoberta de DICOM
+- round-trip mínimo do encoder/decoder HTJ2K
+- geração de report JSON
+- `output-root`
+- `in-place`
+- fallback `copied`
+- ZIP por paciente
 
-```bash
-python compress_exames_htj2k.py ./Exames --report-json ./relatorio.json
-```
+## Notas
 
-### 7) Ajuste fino do OpenJPH
-
-```bash
-python compress_exames_htj2k.py ./Exames \
-  --num-decomps 5 \
-  --block-size 64,64
-```
-
-## Observações importantes
-
-### 1. “Lossless” aqui significa o quê?
-
-- A saída é **HTJ2K lossless em relação aos pixels decodificados de entrada**.
-- Se o arquivo original já estava em um codec **lossy**, o script **não recupera** informação perdida; ele apenas recodifica o resultado decodificado para um codestream HTJ2K lossless.
-- Quando a origem já está marcada como lossy, o script preserva `LossyImageCompression = "01"`.
-
-### 2. Fotometrias suportadas de forma conservadora
-
-O script suporta diretamente:
-
-- `MONOCHROME1`
-- `MONOCHROME2`
-- `PALETTE COLOR`
-- `RGB`
-- `YBR_FULL`
-- `YBR_FULL_422`
-
-No caso de `YBR_FULL_422`, o subsampling 4:2:2 é expandido durante a decodificação mínima e a saída passa a ser gravada como `YBR_FULL`.
-
-Casos mais delicados como `YBR_RCT`, `YBR_ICT` e fotometrias exóticas foram deixados de fora por padrão para evitar mudanças implícitas de espaço de cor. O script registra falha nesses casos e segue com os demais arquivos.
-
-### 3. Bits / tipos suportados
-
-O script foi escrito para os casos clínicos mais comuns:
-
-- `BitsAllocated`: 8, 16 ou 32
-- `SamplesPerPixel`: 1 ou 3
-- pixel data inteiro (`PixelData`), não `FloatPixelData`
-
-### 4. ZIP de pastas já comprimidas
-
-Como os DICOMs já estarão em HTJ2K, normalmente o ZIP adiciona pouco ganho. Por isso o padrão é `--zip-mode stored`.
-
-Se quiser forçar ZIP com deflate:
-
-```bash
-python compress_exames_htj2k.py ./Exames --zip-per-patient --zip-mode deflated
-```
-
-## Como o script decide a decodificação
-
-1. Primeiro tenta decodificar via `pydicom.pixels.iter_pixels(raw=True)`.
-2. Se falhar e o arquivo estiver encapsulado/comprimido, usa `gdcmconv --raw --explicit` para gerar um DICOM temporário nativo.
-3. Em seguida reencoda cada frame com `ojph_compress` em modo reversível (`-reversible true`).
-4. Por fim, encapsula todos os codestreams gerados no DICOM final.
-
-## Observações sobre UID / proveniência
-
-Por padrão o script **preserva** o `SOPInstanceUID`.
-
-Se você quiser uma política mais conservadora de proveniência, use:
-
-```bash
-python compress_exames_htj2k.py ./Exames --regenerate-sop-instance-uid
-```
-
-## Verificações úteis
-
-Checar o Transfer Syntax UID do resultado:
-
-```bash
-dcmdump +P 0002,0010 ./Exames-output/Fulano/data-exame-1/arquivo.dcm
-```
-
-O valor esperado é:
-
-```text
-1.2.840.10008.1.2.4.201
-```
-
-## Limitações práticas
-
-- Não implementa escrita direta via binding Python do OpenJPH; usa a CLI `ojph_compress` por frame.
-- Não tenta fazer transformações automáticas de cor para fotometrias menos comuns.
-- Não trata `FloatPixelData` / `DoubleFloatPixelData`.
-- Em datasets muito grandes/multiframe, o processo pode exigir bastante I/O temporário, porque cada frame é passado ao `ojph_compress` como arquivo `.raw`/`.yuv` temporário.
-
-## Estrutura do projeto
-
-```text
-htj2k-dicom-exames/
-├── README.md
-├── requirements.txt
-├── install_macos_apple_silicon.sh
-└── compress_exames_htj2k.py
-```
+- O protótipo Python original permanece no repositório apenas como referência arquitetural do fluxo substituído.
+- Esta v1 prioriza throughput e segurança operacional sobre cobertura universal de todos os formatos DICOM exóticos.
+- Detalhes de performance: [PERFORMANCE_NOTES.md](./PERFORMANCE_NOTES.md)
+- Detalhes DICOM: [DICOM_NOTES.md](./DICOM_NOTES.md)
