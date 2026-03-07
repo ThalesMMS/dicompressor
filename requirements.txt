@@ -1,0 +1,4 @@
+numpy>=1.26
+pydicom>=3.0
+pylibjpeg>=2.0
+pylibjpeg-openjpeg>=2.0
