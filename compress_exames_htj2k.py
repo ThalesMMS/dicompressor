@@ -792,7 +792,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.strict_color:
                     if "PhotometricInterpretation" in result.message or "SamplesPerPixel" in result.message:
                         break
-            if index % 200 == 0 or index == len(files):
+            if index % 1000 == 0 or index == len(files):
                 elapsed = time.time() - start_time
                 rate = index / elapsed if elapsed > 0 else 0
                 print(f"  [{index}/{len(files)}] {rate:.1f} arquivos/s", flush=True)
@@ -845,7 +845,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             for pending_fut in future_to_info:
                                 pending_fut.cancel()
 
-                if completed % 200 == 0 or completed == len(files):
+                if completed % 1000 == 0 or completed == len(files):
                     elapsed = time.time() - start_time
                     rate = completed / elapsed if elapsed > 0 else 0
                     print(f"  [{completed}/{len(files)}] {rate:.1f} arquivos/s", flush=True)
@@ -860,6 +860,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             zip_path = zip_root / f"{patient}.zip"
             try:
                 zip_patient_folder(patient_dir, zip_path, args.zip_mode)
+                if not args.in_place:
+                    shutil.rmtree(patient_dir)
                 print(f"ZIP criado: {zip_path}")
             except Exception as exc:
                 results.append(
