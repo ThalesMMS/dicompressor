@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import multiprocessing
 import os
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, List, Sequence
@@ -163,6 +165,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help=(
             "Falha em vez de pular silenciosamente fotometrias não suportadas. "
             "Sem esta opção, tais arquivos entram como falha no relatório e o restante continua."
+        ),
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help=(
+            "Número de processos paralelos. Padrão: número de CPUs do sistema "
+            f"(detectado: {os.cpu_count() or 1}). Use 1 para desabilitar paralelismo."
         ),
     )
 
@@ -602,6 +613,46 @@ def process_file(
         os.replace(tmp_output, dst)
 
 
+def _process_file_worker(
+    src: str,
+    dst: str,
+    patient: str | None,
+    ojph_compress_path: str,
+    gdcmconv_path: str,
+    num_decomps: int,
+    block_size: str,
+    overwrite: bool,
+    regenerate_uid: bool,
+) -> ProcessResult:
+    """Top-level worker callable for ProcessPoolExecutor."""
+    try:
+        process_file(
+            src=Path(src),
+            dst=Path(dst),
+            ojph_compress_path=ojph_compress_path,
+            gdcmconv_path=gdcmconv_path,
+            num_decomps=num_decomps,
+            block_size=block_size,
+            overwrite=overwrite,
+            regenerate_uid=regenerate_uid,
+        )
+        return ProcessResult(
+            src=src,
+            dst=dst,
+            status="ok",
+            message="ok",
+            patient=patient,
+        )
+    except Exception as exc:
+        return ProcessResult(
+            src=src,
+            dst=dst,
+            status="failed",
+            message=str(exc),
+            patient=patient,
+        )
+
+
 def zip_patient_folder(patient_dir: Path, zip_path: Path, mode: str) -> None:
     compression = zipfile.ZIP_STORED if mode == "stored" else zipfile.ZIP_DEFLATED
     if zip_path.exists():
@@ -686,61 +737,118 @@ def main(argv: Sequence[str] | None = None) -> int:
     results: list[ProcessResult] = []
     patients_processed: set[str] = set()
 
+    num_workers = args.workers if args.workers is not None else (os.cpu_count() or 1)
+    num_workers = max(1, num_workers)
+
     print(f"Entrada: {input_root}")
     if args.in_place:
         print("Modo: in-place")
     else:
         print(f"Saída: {output_root}")
     print(f"Arquivos DICOM encontrados: {len(files)}")
+    print(f"Workers: {num_workers}")
     print(f"OpenJPH: {ojph_compress_path}")
     print(f"GDCM: {gdcmconv_path}")
+
+    # Compute total input size for throughput stats
+    total_input_bytes = sum(src.stat().st_size for src in files)
 
     # Start timing
     start_time = time.time()
 
-    for index, src in enumerate(files, start=1):
+    # Build work items
+    work_items = []
+    for src in files:
         patient = get_patient_name(input_root, src)
         dst = build_destination(input_root, src, output_root, args.in_place)
-        try:
-            process_file(
-                src=src,
-                dst=dst,
-                ojph_compress_path=ojph_compress_path,
-                gdcmconv_path=gdcmconv_path,
-                num_decomps=args.num_decomps,
-                block_size=block_size,
-                overwrite=args.overwrite,
-                regenerate_uid=args.regenerate_sop_instance_uid,
-            )
-            results.append(
-                ProcessResult(
+        work_items.append((src, dst, patient))
+
+    if num_workers == 1:
+        # Sequential path — preserves strict_color abort and avoids multiprocessing overhead
+        for index, (src, dst, patient) in enumerate(work_items, start=1):
+            try:
+                process_file(
+                    src=src,
+                    dst=dst,
+                    ojph_compress_path=ojph_compress_path,
+                    gdcmconv_path=gdcmconv_path,
+                    num_decomps=args.num_decomps,
+                    block_size=block_size,
+                    overwrite=args.overwrite,
+                    regenerate_uid=args.regenerate_sop_instance_uid,
+                )
+                result = ProcessResult(
+                    src=str(src), dst=str(dst), status="ok", message="ok", patient=patient,
+                )
+            except Exception as exc:
+                result = ProcessResult(
+                    src=str(src), dst=str(dst), status="failed", message=str(exc), patient=patient,
+                )
+            results.append(result)
+            if result.status == "ok" and result.patient:
+                patients_processed.add(result.patient)
+            elif result.status == "failed":
+                print(f"[{index}/{len(files)}] FALHA  {src}\n    {result.message}", file=sys.stderr)
+                if args.strict_color:
+                    if "PhotometricInterpretation" in result.message or "SamplesPerPixel" in result.message:
+                        break
+            if index % 200 == 0 or index == len(files):
+                elapsed = time.time() - start_time
+                rate = index / elapsed if elapsed > 0 else 0
+                print(f"  [{index}/{len(files)}] {rate:.1f} arquivos/s", flush=True)
+    else:
+        # Parallel path using ProcessPoolExecutor
+        completed = 0
+        aborted = False
+        # Use 'spawn' context explicitly for macOS safety (fork can deadlock with certain libs)
+        mp_context = multiprocessing.get_context("spawn")
+
+        with ProcessPoolExecutor(max_workers=num_workers, mp_context=mp_context) as executor:
+            future_to_info = {}
+            for src, dst, patient in work_items:
+                fut = executor.submit(
+                    _process_file_worker,
                     src=str(src),
                     dst=str(dst),
-                    status="ok",
-                    message="ok",
                     patient=patient,
+                    ojph_compress_path=ojph_compress_path,
+                    gdcmconv_path=gdcmconv_path,
+                    num_decomps=args.num_decomps,
+                    block_size=block_size,
+                    overwrite=args.overwrite,
+                    regenerate_uid=args.regenerate_sop_instance_uid,
                 )
-            )
-            if patient:
-                patients_processed.add(patient)
-            # print(f"[{index}/{len(files)}] OK     {src}")
-        except Exception as exc:
-            message = str(exc)
-            results.append(
-                ProcessResult(
-                    src=str(src),
-                    dst=str(dst),
-                    status="failed",
-                    message=message,
-                    patient=patient,
-                )
-            )
-            print(f"[{index}/{len(files)}] FALHA  {src}\n    {message}", file=sys.stderr)
-            if args.strict_color:
-                # strict-color is meant as a hard-stop toggle when a color case or other
-                # unsupported input should abort the batch immediately.
-                if "PhotometricInterpretation" in message or "SamplesPerPixel" in message:
-                    break
+                future_to_info[fut] = (src, dst, patient)
+
+            for fut in as_completed(future_to_info):
+                completed += 1
+                try:
+                    result = fut.result()
+                except Exception as exc:
+                    src, dst, patient = future_to_info[fut]
+                    result = ProcessResult(
+                        src=str(src), dst=str(dst), status="failed",
+                        message=f"Erro inesperado no worker: {exc}", patient=patient,
+                    )
+                results.append(result)
+                if result.status == "ok" and result.patient:
+                    patients_processed.add(result.patient)
+                elif result.status == "failed":
+                    print(
+                        f"[{completed}/{len(files)}] FALHA  {result.src}\n    {result.message}",
+                        file=sys.stderr,
+                    )
+                    if args.strict_color and not aborted:
+                        if "PhotometricInterpretation" in result.message or "SamplesPerPixel" in result.message:
+                            aborted = True
+                            # Cancel pending futures
+                            for pending_fut in future_to_info:
+                                pending_fut.cancel()
+
+                if completed % 200 == 0 or completed == len(files):
+                    elapsed = time.time() - start_time
+                    rate = completed / elapsed if elapsed > 0 else 0
+                    print(f"  [{completed}/{len(files)}] {rate:.1f} arquivos/s", flush=True)
 
     if args.zip_per_patient:
         zip_root = input_root if args.in_place else output_root
@@ -769,7 +877,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     end_time = time.time()
     execution_time = end_time - start_time
 
-    # Print execution time
+    # Print execution time and throughput
     hours = int(execution_time // 3600)
     minutes = int((execution_time % 3600) // 60)
     seconds = execution_time % 60
@@ -780,6 +888,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Tempo de execução: {minutes}m {seconds:.2f}s")
     else:
         print(f"Tempo de execução: {seconds:.2f}s")
+
+    if execution_time > 0:
+        files_per_sec = len(results) / execution_time
+        mb_per_sec = (total_input_bytes / (1024 * 1024)) / execution_time
+        print(f"Throughput: {files_per_sec:.1f} arquivos/s, {mb_per_sec:.1f} MB/s (entrada)")
 
     if args.report_json:
         write_report(Path(args.report_json).resolve(), results)
