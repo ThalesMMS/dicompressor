@@ -79,10 +79,10 @@ build_cmake_project \
 
 cat <<EOF
 
-Bootstrap concluído.
-Dependências instaladas em:
+Bootstrap completed.
+Dependencies installed in:
   ${INSTALL_DIR}
 
-Configure o projeto com:
+Configure the project with:
   cmake --preset macos-arm64-release -DCMAKE_PREFIX_PATH=${INSTALL_DIR}
 EOF
