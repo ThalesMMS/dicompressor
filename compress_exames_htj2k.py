@@ -60,6 +60,11 @@ class ProcessingError(RuntimeError):
     pass
 
 
+class UnsupportedFormatError(ProcessingError):
+    """Raised when a DICOM file cannot be HTJ2K-encoded (e.g. BitsAllocated=1, no PixelData)."""
+    pass
+
+
 @dataclass(frozen=True)
 class ImageSpec:
     rows: int
@@ -227,18 +232,15 @@ def validate_roots(input_root: Path, output_root: Path | None, in_place: bool) -
     )
 
 
-def mirror_directory_tree(input_root: Path, output_root: Path) -> None:
-    output_root.mkdir(parents=True, exist_ok=True)
-    for entry in input_root.rglob("*"):
-        if entry.is_dir():
-            (output_root / entry.relative_to(input_root)).mkdir(parents=True, exist_ok=True)
-
-
 def discover_dicom_files(input_root: Path) -> List[Path]:
     files: List[Path] = []
-    for path in sorted(input_root.rglob("*")):
+    scanned = 0
+    for path in input_root.rglob("*"):
         if not path.is_file():
             continue
+        scanned += 1
+        if scanned % 50000 == 0:
+            print(f"  Descobrindo arquivos... {scanned} verificados, {len(files)} DICOM até agora", flush=True)
         if path.suffix.lower() == ".dcm":
             files.append(path)
             continue
@@ -247,6 +249,7 @@ def discover_dicom_files(input_root: Path) -> List[Path]:
                 files.append(path)
         except Exception:
             continue
+    files.sort()
     return files
 
 
@@ -301,9 +304,9 @@ def normalize_block_size(value: str) -> str:
 
 def build_image_spec(ds) -> ImageSpec:
     if "PixelData" not in ds:
-        raise ProcessingError("Dataset sem PixelData")
+        raise UnsupportedFormatError("Dataset sem PixelData")
     if "FloatPixelData" in ds or "DoubleFloatPixelData" in ds:
-        raise ProcessingError("Float Pixel Data / Double Float Pixel Data não são suportados por este script")
+        raise UnsupportedFormatError("Float Pixel Data / Double Float Pixel Data não são suportados por este script")
 
     required = [
         "Rows",
@@ -332,13 +335,13 @@ def build_image_spec(ds) -> ImageSpec:
     if rows <= 0 or cols <= 0:
         raise ProcessingError("Rows/Columns inválidos")
     if samples not in (1, 3):
-        raise ProcessingError(f"SamplesPerPixel={samples} não suportado; suportado: 1 ou 3")
+        raise UnsupportedFormatError(f"SamplesPerPixel={samples} não suportado; suportado: 1 ou 3")
     if bits_allocated not in (8, 16, 32):
-        raise ProcessingError(
+        raise UnsupportedFormatError(
             f"BitsAllocated={bits_allocated} não suportado por este script; suportado: 8, 16 ou 32"
         )
     if photometric not in SUPPORTED_PHOTOMETRIC:
-        raise ProcessingError(
+        raise UnsupportedFormatError(
             "PhotometricInterpretation não suportado de forma conservadora por este script: "
             f"{photometric}. Suportados: {', '.join(sorted(SUPPORTED_PHOTOMETRIC))}"
         )
@@ -551,6 +554,14 @@ def update_dataset_for_htj2k(ds, spec: ImageSpec, historically_lossy: bool, rege
         ds.LossyImageCompression = "01"
 
 
+def _copy_file_as_is(src: Path, dst: Path) -> None:
+    """Copy a DICOM file without modification when it cannot be HTJ2K-encoded."""
+    if src.resolve() == dst.resolve():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
 def process_file(
     src: Path,
     dst: Path,
@@ -560,12 +571,17 @@ def process_file(
     block_size: str,
     overwrite: bool,
     regenerate_uid: bool,
-) -> None:
+) -> str:
+    """Returns 'ok' if HTJ2K-encoded, 'copied' if copied as-is due to unsupported format."""
     if dst.exists() and not overwrite and src.resolve() != dst.resolve():
         raise ProcessingError(f"Arquivo de saída já existe: {dst}")
 
     ds = dcmread(str(src), force=True, defer_size=1024)
-    spec = build_image_spec(ds)
+    try:
+        spec = build_image_spec(ds)
+    except UnsupportedFormatError:
+        _copy_file_as_is(src, dst)
+        return "copied"
     historically_lossy = source_is_historically_lossy(ds)
 
     encoded_frames: list[bytes] = []
@@ -612,6 +628,8 @@ def process_file(
             dst.unlink()
         os.replace(tmp_output, dst)
 
+    return "ok"
+
 
 def _process_file_worker(
     src: str,
@@ -626,7 +644,7 @@ def _process_file_worker(
 ) -> ProcessResult:
     """Top-level worker callable for ProcessPoolExecutor."""
     try:
-        process_file(
+        status = process_file(
             src=Path(src),
             dst=Path(dst),
             ojph_compress_path=ojph_compress_path,
@@ -639,8 +657,8 @@ def _process_file_worker(
         return ProcessResult(
             src=src,
             dst=dst,
-            status="ok",
-            message="ok",
+            status=status,
+            message=status,
             patient=patient,
         )
     except Exception as exc:
@@ -689,6 +707,7 @@ def write_report(report_path: Path, results: list[ProcessResult]) -> None:
         "summary": {
             "total": len(results),
             "ok": sum(1 for r in results if r.status == "ok"),
+            "copied": sum(1 for r in results if r.status == "copied"),
             "failed": sum(1 for r in results if r.status == "failed"),
         },
         "results": [r.__dict__ for r in results],
@@ -727,7 +746,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     if output_root is not None:
-        mirror_directory_tree(input_root, output_root)
+        output_root.mkdir(parents=True, exist_ok=True)
 
     files = discover_dicom_files(input_root)
     if not files:
@@ -750,9 +769,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"OpenJPH: {ojph_compress_path}")
     print(f"GDCM: {gdcmconv_path}")
 
-    # Compute total input size for throughput stats
-    total_input_bytes = sum(src.stat().st_size for src in files)
-
     # Start timing
     start_time = time.time()
 
@@ -767,7 +783,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Sequential path — preserves strict_color abort and avoids multiprocessing overhead
         for index, (src, dst, patient) in enumerate(work_items, start=1):
             try:
-                process_file(
+                status = process_file(
                     src=src,
                     dst=dst,
                     ojph_compress_path=ojph_compress_path,
@@ -778,14 +794,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     regenerate_uid=args.regenerate_sop_instance_uid,
                 )
                 result = ProcessResult(
-                    src=str(src), dst=str(dst), status="ok", message="ok", patient=patient,
+                    src=str(src), dst=str(dst), status=status, message=status, patient=patient,
                 )
             except Exception as exc:
                 result = ProcessResult(
                     src=str(src), dst=str(dst), status="failed", message=str(exc), patient=patient,
                 )
             results.append(result)
-            if result.status == "ok" and result.patient:
+            if result.status in ("ok", "copied") and result.patient:
                 patients_processed.add(result.patient)
             elif result.status == "failed":
                 print(f"[{index}/{len(files)}] FALHA  {src}\n    {result.message}", file=sys.stderr)
@@ -831,7 +847,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         message=f"Erro inesperado no worker: {exc}", patient=patient,
                     )
                 results.append(result)
-                if result.status == "ok" and result.patient:
+                if result.status in ("ok", "copied") and result.patient:
                     patients_processed.add(result.patient)
                 elif result.status == "failed":
                     print(
@@ -893,15 +909,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if execution_time > 0:
         files_per_sec = len(results) / execution_time
-        mb_per_sec = (total_input_bytes / (1024 * 1024)) / execution_time
-        print(f"Throughput: {files_per_sec:.1f} arquivos/s, {mb_per_sec:.1f} MB/s (entrada)")
+        print(f"Throughput: {files_per_sec:.1f} arquivos/s")
 
     if args.report_json:
         write_report(Path(args.report_json).resolve(), results)
 
     ok_count = sum(1 for r in results if r.status == "ok")
+    copied_count = sum(1 for r in results if r.status == "copied")
     fail_count = sum(1 for r in results if r.status == "failed")
-    print(f"Resumo: ok={ok_count} falha={fail_count} total={len(results)}")
+    print(f"Resumo: ok={ok_count} copiados={copied_count} falha={fail_count} total={len(results)}")
     return 0 if fail_count == 0 else 3
 
 
