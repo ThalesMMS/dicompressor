@@ -1,6 +1,10 @@
 # dicompressor
 
-DICOM transcoder in C++20 for batch re-encoding to HTJ2K lossless (`1.2.840.10008.1.2.4.201`), with 100% native hot path, no subprocess and no temporary `.raw/.yuv/.j2c` files.
+![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
+![CMake 3.24+](https://img.shields.io/badge/CMake-3.24%2B-informational.svg)
+![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
+
+Batch DICOM compressor and HTJ2K/JPEG 2000 lossless transcoder CLI in C++20 for recursively re-encoding studies to `1.2.840.10008.1.2.4.201`, with a native hot path, no subprocesses, no temporary `.raw/.yuv/.j2c` files, and optional JSON reporting.
 
 ## Overview
 
@@ -62,6 +66,13 @@ The scripts in [`scripts/`](./scripts) build an isolated prefix in `.deps/instal
 
 ## Build
 
+### 0. Clone the repository
+
+```bash
+git clone https://github.com/ThalesMMS/dicompressor.git
+cd dicompressor
+```
+
 ### 1. Bootstrap dependencies
 
 macOS Apple Silicon:
@@ -94,11 +105,27 @@ cmake --preset release \
 
 ### 3. Compile
 
+macOS Apple Silicon:
+
+```bash
+cmake --build --preset macos-arm64-release -j
+```
+
+Linux:
+
 ```bash
 cmake --build --preset release -j
 ```
 
 ### 4. Test
+
+macOS Apple Silicon:
+
+```bash
+ctest --test-dir build/macos-arm64-release --output-on-failure
+```
+
+Linux:
 
 ```bash
 ctest --preset release
@@ -130,10 +157,20 @@ dicompressor <input_root> [--output-root PATH | --in-place]
 
 ### Examples
 
+Use `./build/release/dicompressor` on Linux or `./build/macos-arm64-release/dicompressor` on Apple Silicon.
+
 Mirrored output in separate folder:
+
+Linux:
 
 ```bash
 ./build/release/dicompressor ./Studies --output-root ./Studies-output
+```
+
+macOS Apple Silicon:
+
+```bash
+./build/macos-arm64-release/dicompressor ./Studies --output-root ./Studies-output
 ```
 
 In-place:
@@ -191,7 +228,7 @@ With `--report-json`, the file also includes entries per job.
 
 ## Benchmark
 
-The [`transcode_bench`](./bench/main.cpp) binary reuses the same core and emits the aggregate execution summary:
+The [`transcode_bench`](./bench/main.cpp) binary reuses the same core and emits the aggregate execution summary. Use `./build/release/transcode_bench` on Linux or `./build/macos-arm64-release/transcode_bench` on Apple Silicon.
 
 ```bash
 ./build/release/transcode_bench ./Studies --output-root ./Studies-bench-out --workers 1
@@ -210,6 +247,12 @@ The suite covers:
 - `in-place`
 - `copied` fallback
 - ZIP per patient
+
+## Related ThalesMMS projects
+
+- [DICOM-Decoder](https://github.com/ThalesMMS/DICOM-Decoder), a pure Swift DICOM decoder toolkit for iOS and macOS.
+- [Dicom-Tools](https://github.com/ThalesMMS/Dicom-Tools), a multi-language DICOM toolkit with CLIs and utilities across Python, Rust, C++, C#, Java, and JS.
+- [MTK](https://github.com/ThalesMMS/MTK), an Apple-platform volumetric rendering stack for medical-image research and prototyping.
 
 ## Notes
 
