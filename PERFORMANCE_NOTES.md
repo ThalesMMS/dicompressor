@@ -18,6 +18,8 @@
 
 - Frame-by-frame decoding.
 - Does not materialize all decoded frames of a study at the same time.
+- Multi-frame encapsulation appends each encoded codestream incrementally into the output `DcmPixelSequence` instead of retaining a separate `std::vector` of all encoded frames.
+- DCMTK still owns the compressed frame data inside the output pixel sequence, so this removes redundant double-buffering during encode/encapsulation rather than making large multi-frame writes true constant-memory streaming.
 - Reused scratch buffers.
 
 ## I/O
@@ -38,6 +40,5 @@
 ## Next steps
 
 - Persistent `WorkerContext` per thread.
-- Streaming encapsulation for very large multi-frame.
 - RSS metrics and p50/p95 histograms.
 - Vectorized fast-paths for mono 16-bit and RGB 8-bit.

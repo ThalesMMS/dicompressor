@@ -45,6 +45,7 @@ Implemented in this version:
 - `MONOCHROME1`, `MONOCHROME2`, `RGB`, `YBR_FULL`, `YBR_FULL_422`, `PALETTE COLOR`, `YBR_RCT`, `YBR_ICT`.
 - Conservative preservation of metadata and lossy history.
 - `ExtendedOffsetTable` and `ExtendedOffsetTableLengths` for multi-frame output.
+- Streaming multi-frame encapsulation for large cine/volume studies: encoded codestreams are appended into DCMTK's output pixel sequence as each frame is produced, avoiding a redundant whole-study codestream vector.
 - Aggregate and JSON report.
 - ZIP per patient.
 - Tests + benchmark executable.
@@ -144,7 +145,7 @@ Release uses `-O3`, `NDEBUG` and IPO/LTO when supported.
 ```bash
 dicompressor <input_root> [--output-root PATH | --in-place]
                            [--zip-per-patient]
-                           [--zip-mode stored|deflated]
+                           [--zip-mode stored|deflated (requires --zip-per-patient)]
                            [--report-json PATH]
                            [--num-decomps N]
                            [--block-size X,Y]
@@ -154,6 +155,8 @@ dicompressor <input_root> [--output-root PATH | --in-place]
                            [--workers N]
                            [--log-level trace|debug|info|warn|error]
 ```
+
+`--zip-mode` selects the compression mode for patient ZIP output and requires `--zip-per-patient`.
 
 ### Examples
 
@@ -187,7 +190,7 @@ With JSON report:
   --report-json ./report.json
 ```
 
-With ZIP per patient:
+With ZIP per patient and explicit ZIP mode:
 
 ```bash
 ./build/release/dicompressor ./Studies \
@@ -235,6 +238,10 @@ The [`transcode_bench`](./bench/main.cpp) binary reuses the same core and emits 
 ./build/release/transcode_bench ./Studies --output-root ./Studies-bench-out --workers 8
 ```
 
+To benchmark streaming multi-frame encapsulation, use an input corpus that includes actual multi-frame cine or volume DICOM objects. A directory of only single-frame images measures decode/encode/write throughput, but it does not exercise the large-study frame append path or its memory behavior.
+
+Memory usage for multi-frame output still includes DCMTK's internal compressed pixel sequence representation; the streaming path avoids double-buffering those encoded frames during the encoding phase rather than providing constant-memory output streaming.
+
 ## Tests
 
 The suite covers:
@@ -242,6 +249,8 @@ The suite covers:
 - CLI parsing
 - DICOM discovery
 - minimal HTJ2K encoder/decoder round-trip
+- streaming multi-frame pixel sequence offsets
+- multi-frame transcode output validity and offset tables
 - JSON report generation
 - `output-root`
 - `in-place`
@@ -250,9 +259,9 @@ The suite covers:
 
 ## Related ThalesMMS projects
 
-- [DICOM-Decoder](https://github.com/ThalesMMS/DICOM-Decoder), a pure Swift DICOM decoder toolkit for iOS and macOS.
-- [Dicom-Tools](https://github.com/ThalesMMS/Dicom-Tools), a multi-language DICOM toolkit with CLIs and utilities across Python, Rust, C++, C#, Java, and JS.
-- [MTK](https://github.com/ThalesMMS/MTK), an Apple-platform volumetric rendering stack for medical-image research and prototyping.
+- [DICOM-Decoder-dev](https://github.com/ThalesMMS/DICOM-Decoder-dev), a pure Swift DICOM decoder toolkit for iOS and macOS.
+- [Dicom-Tools-dev](https://github.com/ThalesMMS/Dicom-Tools-dev), a multi-language DICOM toolkit with CLIs and utilities across Python, Rust, C++, C#, Java, and JS.
+- [MTK-dev](https://github.com/ThalesMMS/MTK-dev), an Apple-platform volumetric rendering stack for medical-image research and prototyping.
 
 ## Notes
 

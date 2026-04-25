@@ -48,6 +48,7 @@ target_sources(
     dicom/dicom_writer.cpp
     dicom/photometric.cpp
     dicom/pixel_sequence_builder.cpp
+    dicom/streaming_pixel_sequence_builder.cpp
     dicom/transfer_syntax.cpp
     platform/fsync.cpp
     util/fs.cpp
@@ -120,6 +121,7 @@ if(HTJ2K_TRANSCODER_BUILD_TESTS)
     tests/test_cli.cpp
     tests/test_discovery.cpp
     tests/test_encoder.cpp
+    tests/test_streaming_pixel_sequence_builder.cpp
     tests/test_report.cpp
     tests/test_transcoder.cpp
     tests/test_zip.cpp)

@@ -100,7 +100,6 @@ struct JobResult {
 struct DiscoveryResult {
   std::vector<std::filesystem::path> files;
   std::vector<std::filesystem::path> directories;
-  std::uint64_t bytes_total = 0;
 };
 
 struct SummaryCounters {

@@ -12,6 +12,8 @@ int main(int argc, char** argv)
       std::cout << htj2k::app::usage_text();
       return 0;
     }
+    // Multi-frame encapsulation memory behavior is only exercised when the input
+    // corpus contains real multi-frame cine/volume datasets.
     cli.options.benchmark_mode = true;
     htj2k::util::set_log_level(cli.options.log_level);
     htj2k::core::Transcoder transcoder(htj2k::app::current_build_info(), cli.options);

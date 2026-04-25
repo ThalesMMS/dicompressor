@@ -68,6 +68,7 @@ CliParseResult parse_cli(const int argc, char** argv)
   CliParseResult result;
   auto& options = result.options;
   options.workers = default_workers();
+  bool zip_mode_specified = false;
 
   std::vector<std::string_view> args(argv + 1, argv + argc);
   if (args.empty()) {
@@ -102,6 +103,7 @@ CliParseResult parse_cli(const int argc, char** argv)
       continue;
     }
     if (arg == "--zip-mode") {
+      zip_mode_specified = true;
       options.zip.mode = parse_zip_mode(require_value(i, arg));
       ++i;
       continue;
@@ -161,6 +163,9 @@ CliParseResult parse_cli(const int argc, char** argv)
   if (options.in_place && !options.output_root.empty()) {
     throw std::runtime_error("use either --output-root or --in-place");
   }
+  if (zip_mode_specified && !options.zip.enabled) {
+    throw std::runtime_error("--zip-mode requires --zip-per-patient");
+  }
   if (!options.in_place && options.output_root.empty()) {
     options.output_root = options.input_root;
     options.output_root += "-output";
@@ -177,7 +182,7 @@ std::string usage_text()
   out << "Usage:\n"
       << "  dicompressor <input_root> [--output-root PATH | --in-place]\n"
       << "                           [--zip-per-patient]\n"
-      << "                           [--zip-mode stored|deflated]\n"
+      << "                           [--zip-mode stored|deflated (requires --zip-per-patient)]\n"
       << "                           [--report-json PATH]\n"
       << "                           [--num-decomps N]\n"
       << "                           [--block-size X,Y]\n"

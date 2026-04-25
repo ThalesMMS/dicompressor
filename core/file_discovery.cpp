@@ -56,8 +56,6 @@ DiscoveryResult discover_files(const std::filesystem::path& input_root)
     }
 
     result.files.push_back(std::filesystem::relative(path, input_root));
-    const auto file_size = std::filesystem::file_size(path);
-    result.bytes_total += static_cast<std::uint64_t>(file_size);
   }
 
   return result;

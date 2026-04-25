@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -18,8 +20,8 @@
 #include "dicom/dicom_metadata.hpp"
 #include "dicom/dicom_reader.hpp"
 #include "dicom/dicom_writer.hpp"
-#include "dicom/pixel_sequence_builder.hpp"
 #include "dicom/photometric.hpp"
+#include "dicom/streaming_pixel_sequence_builder.hpp"
 #include "dicom/transfer_syntax.hpp"
 #include "util/fs.hpp"
 #include "util/logging.hpp"
@@ -45,8 +47,7 @@ bool is_supported_for_transcode(const dicom::ImageSpec& spec)
          (spec.samples_per_pixel == 1 || spec.samples_per_pixel == 3);
 }
 
-void install_pixel_sequence(DcmDataset& dataset,
-                            const std::vector<std::vector<std::uint8_t>>& codestreams)
+void install_pixel_sequence(DcmDataset& dataset, dicom::StreamingPixelSequenceResult pixel_sequence)
 {
   DcmElement* element = nullptr;
   if (dataset.findAndGetElement(DCM_PixelData, element).bad() || element == nullptr) {
@@ -57,13 +58,17 @@ void install_pixel_sequence(DcmDataset& dataset,
     throw std::runtime_error("PixelData element has unexpected type");
   }
 
-  std::vector<Uint64> extended_offsets;
-  std::vector<Uint64> extended_lengths;
-  auto pixel_sequence = dicom::build_pixel_sequence(codestreams, extended_offsets, extended_lengths);
-  pixel_data->putOriginalRepresentation(EXS_HighThroughputJPEG2000LosslessOnly, nullptr, pixel_sequence.release());
-  if (codestreams.size() > 1) {
-    dataset.putAndInsertUint64Array(DCM_ExtendedOffsetTable, extended_offsets.data(), extended_offsets.size());
-    dataset.putAndInsertUint64Array(DCM_ExtendedOffsetTableLengths, extended_lengths.data(), extended_lengths.size());
+  const auto frame_count = pixel_sequence.extended_offsets.size();
+  if (frame_count != pixel_sequence.extended_lengths.size()) {
+    throw std::runtime_error("extended offset table metadata size mismatch");
+  }
+  pixel_data->putOriginalRepresentation(
+    EXS_HighThroughputJPEG2000LosslessOnly, nullptr, pixel_sequence.pixel_sequence.release());
+  if (frame_count > 1) {
+    dataset.putAndInsertUint64Array(
+      DCM_ExtendedOffsetTable, pixel_sequence.extended_offsets.data(), pixel_sequence.extended_offsets.size());
+    dataset.putAndInsertUint64Array(
+      DCM_ExtendedOffsetTableLengths, pixel_sequence.extended_lengths.data(), pixel_sequence.extended_lengths.size());
   } else {
     dataset.findAndDeleteElement(DCM_ExtendedOffsetTable, true, true);
     dataset.findAndDeleteElement(DCM_ExtendedOffsetTableLengths, true, true);
@@ -116,26 +121,42 @@ TranscodeReport Transcoder::run()
   RuntimeStats stats;
   stats.discovered.store(discovery.files.size());
 
-  std::atomic<bool> stop_progress{false};
+  std::mutex progress_mutex;
+  std::condition_variable progress_cv;
+  bool stop_progress = false;
   std::thread progress_thread([&] {
-    while (!stop_progress.load()) {
-      std::this_thread::sleep_for(std::chrono::seconds(5));
-      if (stop_progress.load()) {
+    std::unique_lock<std::mutex> lock(progress_mutex);
+    for (;;) {
+      if (progress_cv.wait_for(lock, std::chrono::seconds(5), [&] { return stop_progress; })) {
         break;
       }
+      lock.unlock();
       maybe_log_progress(stats, discovery.files.size());
+      lock.lock();
     }
   });
+  auto stop_progress_thread = [&] {
+    {
+      std::lock_guard<std::mutex> lock(progress_mutex);
+      stop_progress = true;
+    }
+    progress_cv.notify_one();
+    if (progress_thread.joinable()) {
+      progress_thread.join();
+    }
+  };
 
   JobScheduler scheduler(options_.workers);
-  auto results = scheduler.run(discovery.files, stats, [this](const std::filesystem::path& relative_path) {
-    return process_one(relative_path);
-  });
-
-  stop_progress.store(true);
-  if (progress_thread.joinable()) {
-    progress_thread.join();
+  std::vector<JobResult> results;
+  try {
+    results = scheduler.run(discovery.files, stats, [this](const std::filesystem::path& relative_path) {
+      return process_one(relative_path);
+    });
+  } catch (...) {
+    stop_progress_thread();
+    throw;
   }
+  stop_progress_thread();
 
   for (auto& result : results) {
     report.add_result(std::move(result));
@@ -214,8 +235,7 @@ JobResult Transcoder::process_one(const std::filesystem::path& relative_path) co
 
     codec::Htj2kEncoder encoder;
     codec::OwnedFrameBuffer scratch;
-    std::vector<std::vector<std::uint8_t>> codestreams;
-    codestreams.reserve(decoder->frame_count());
+    dicom::StreamingPixelSequenceBuilder pixel_sequence_builder;
 
     timer.reset();
     for (std::size_t frame = 0; frame < decoder->frame_count(); ++frame) {
@@ -229,13 +249,15 @@ JobResult Transcoder::process_one(const std::filesystem::path& relative_path) co
       timer.reset();
       auto encoded = encoder.encode(spec, frame_view, options_.encode);
       result.phase_times.encode_seconds += timer.elapsed_seconds();
-      codestreams.push_back(std::move(encoded.codestream));
+      timer.reset();
+      pixel_sequence_builder.append_frame(std::move(encoded.codestream));
+      result.phase_times.encapsulate_seconds += timer.elapsed_seconds();
       timer.reset();
     }
 
     timer.reset();
-    install_pixel_sequence(*loaded.dataset, codestreams);
-    result.phase_times.encapsulate_seconds = timer.elapsed_seconds();
+    install_pixel_sequence(*loaded.dataset, pixel_sequence_builder.finalize());
+    result.phase_times.encapsulate_seconds += timer.elapsed_seconds();
 
     timer.reset();
     dicom::apply_output_metadata(
